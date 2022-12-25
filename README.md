@@ -8,15 +8,15 @@ Example usage with Docker Compose
     version: "3.8"
     services:
       opnapi:
-      image: 'ghcr.io/markfortedev/opnsensealiasintermediate:master'
-      restart: unless-stopped
-      ports:
-      - '12356:12356'
-      environment:
-        OPNSENSE_ADDR: "10.0.0.1"
-        APIKEY: "key"
-        APIPASS: "secret"
-        ALIAS_NAME: "alias"
+        image: 'ghcr.io/markfortedev/opnsensealiasintermediate:master'
+        restart: unless-stopped
+        ports:
+        - '12356:12356'
+        environment:
+          OPNSENSE_ADDR: "10.0.0.1"
+          APIKEY: "key"
+          APIPASS: "secret"
+          ALIAS_NAME: "alias"
 
 ### Environment Variables
 
