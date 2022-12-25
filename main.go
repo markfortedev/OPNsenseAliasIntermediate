@@ -14,10 +14,20 @@ import (
 )
 
 const PORT = 12356
-const ENDPOINT = "https://%v/api/firewall/alias_util/add/%v"
+const AddEndpoint = "https://%v/api/firewall/alias_util/add/%v"
+const ListEndpoint = "https://%v/api/firewall/alias_util/list/%v"
 
 type OPNSenseAliasBody struct {
 	Address string `json:"address"`
+}
+
+type ListAliasResponse struct {
+	Total    int `json:"total"`
+	RowCount int `json:"rowCount"`
+	Current  int `json:"current"`
+	Rows     []struct {
+		Ip string `json:"ip"`
+	} `json:"rows"`
 }
 
 var client *http.Client
@@ -25,12 +35,22 @@ var ipRegexp *regexp.Regexp
 
 func handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 	ipAddress := r.URL.Query().Get("ip")
-	log.Infof("Recieved request to add IP [%v] to authorized list", ipAddress)
 	valid := validateIP(ipAddress)
 	if !valid {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
+	switch r.Method {
+	case "GET":
+		handleGetIPAuthorized(w, ipAddress)
+	case "POST":
+		handlePostIP(w, ipAddress)
+	}
+}
+
+func handlePostIP(w http.ResponseWriter, ipAddress string) {
+	log.Infof("Recieved request to add IP [%v] to authorized list", ipAddress)
+
 	success := authorizeIP(ipAddress)
 	if !success {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -40,6 +60,24 @@ func handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 	log.Infof("Successfully authorized [%v]", ipAddress)
 }
 
+func handleGetIPAuthorized(w http.ResponseWriter, ipAddress string) {
+	log.Infof("Recieved request to check IP [%v]", ipAddress)
+
+	authorized, success := isIPAuthorized(ipAddress)
+	if !success {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	if authorized {
+		log.Infof("[%v] is authorized", ipAddress)
+		w.Write([]byte("authorized"))
+	} else {
+		log.Infof("[%v] is not authorized", ipAddress)
+		w.Write([]byte("unauthorized"))
+	}
+}
+
 func validateIP(ip string) bool {
 	return ipRegexp.MatchString(ip)
 }
@@ -47,23 +85,15 @@ func validateIP(ip string) bool {
 func authorizeIP(ip string) bool {
 	aliasName := os.Getenv("ALIAS_NAME")
 	address := os.Getenv("OPNSENSE_ADDR")
-	endpoint := fmt.Sprintf(ENDPOINT, address, aliasName)
+	endpoint := fmt.Sprintf(AddEndpoint, address, aliasName)
 	body := &OPNSenseAliasBody{
 		Address: ip,
 	}
 	marshaledBody, _ := json.Marshal(body)
 	requestBody := bytes.NewBuffer(marshaledBody)
-	request, err := http.NewRequest("POST", endpoint, requestBody)
+	response, err := sendOPNAPI(endpoint, "POST", requestBody)
 	if err != nil {
-		log.Errorf("Error creating api POST request: %v", err)
-		return false
-	}
-	request.Header.Add("Content-Type", "application/json")
-	request.SetBasicAuth(os.Getenv("APIKEY"), os.Getenv("APIPASS"))
-	log.Infof("Sending request to [%v] with body %v", endpoint, body)
-	response, err := client.Do(request)
-	if err != nil {
-		log.Errorf("Error sending request: %v", err)
+		log.Errorf("Error sending authorize API request")
 		return false
 	}
 	defer response.Body.Close()
@@ -79,6 +109,54 @@ func authorizeIP(ip string) bool {
 	s := string(responseBodyText)
 	log.Infof("Response: %v", s)
 	return true
+}
+
+func isIPAuthorized(ipAddress string) (bool, bool) {
+	aliasName := os.Getenv("ALIAS_NAME")
+	address := os.Getenv("OPNSENSE_ADDR")
+	endpoint := fmt.Sprintf(ListEndpoint, address, aliasName)
+	response, err := sendOPNAPI(endpoint, "GET", &bytes.Buffer{})
+	if err != nil {
+		log.Errorf("Error sending list API request")
+		return false, false
+	}
+	defer response.Body.Close()
+	listResponse := ListAliasResponse{}
+	err = json.NewDecoder(response.Body).Decode(&listResponse)
+	if err != nil {
+		log.Errorf("Failed to decode list API response: %v", err)
+		return false, false
+	}
+	ips := listResponse.Rows
+	for _, row := range ips {
+		if row.Ip == ipAddress {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func sendOPNAPI(endpoint string, method string, body *bytes.Buffer) (*http.Response, error) {
+	request, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		log.Errorf("Error creating api GET request: %v", err)
+		return nil, err
+	}
+	request.SetBasicAuth(os.Getenv("APIKEY"), os.Getenv("APIPASS"))
+	if method == "POST" {
+		request.Header.Add("Content-Type", "application/json")
+	}
+	log.Infof("Sending request to [%v]", endpoint)
+	response, err := client.Do(request)
+	if err != nil {
+		log.Errorf("Error sending request: %v", err)
+		return response, err
+	}
+	if response.StatusCode != 200 {
+		log.Errorf("Failed to send request (Code: %v): %v", response.StatusCode, response.Status)
+		return nil, err
+	}
+	return response, nil
 }
 
 func main() {
