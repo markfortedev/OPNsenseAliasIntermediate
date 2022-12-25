@@ -18,6 +18,14 @@ Example usage with Docker Compose
           APIPASS: "secret"
           ALIAS_NAME: "alias"
 
+##### To check if an IP address is authorized 
+
+GET /?ip=10.0.0.1
+
+##### To authorize an IP address
+
+POST /?ip=10.0.0.1
+
 ### Environment Variables
 
 | Variable      | Description      |
